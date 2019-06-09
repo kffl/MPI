@@ -37,8 +37,6 @@
 #define RESOURCE_VEHICLE 2 // pojazd
 #define RESOURCE_TECHNICIAN 3 // technik
 
-char passive = FALSE;
-
 /* TYPY WIADOMOŚCI */
 
 // wiadomość REQ
@@ -63,18 +61,19 @@ typedef struct {
 
 /* FUNKCJE WYSYŁAJĄCE WIADOMOŚCI */
 
-void sendREQ(int resource_type, int resource_id) {
+void sendREQ(int resource_type, int resource_id, int source, int count) {
 
     msg_REQ msg;
     msg.resource_id = resource_id;
     msg.resource_type = resource_type;
     msg.timestamp = ++l_clock;
-
-    MPI_Send(&msg, sizeof(msg), MPI_INT, target, MSG_TYPE_REQ, MPI_COMM_WORLD);
-    // TODO - poprawić aby rozsyłać do każdego
+    
+    for (int i = 0; i < count; i++) {
+        MPI_Send(&msg, sizeof(msg), MPI_INT, i, MSG_TYPE_REQ, MPI_COMM_WORLD);
+    }
 }
 
-void sendREL(int resource_type, int resource_id, int resource_update_value) {
+void sendREL(int resource_type, int resource_id, int resource_update_value, int source, int count) {
 
     msg_REL msg;
     msg.resource_id = resource_id;
@@ -82,8 +81,9 @@ void sendREL(int resource_type, int resource_id, int resource_update_value) {
     msg.resource_update_value = resource_update_value;
     msg.timestamp = ++l_clock;
 
-    MPI_Send(&msg, sizeof(msg), MPI_INT, target, MSG_TYPE_REL, MPI_COMM_WORLD);
-    // TODO - poprawić aby rozsyłać do każdego
+    for (int i = 0; i < count; i++) {
+        MPI_Send(&msg, sizeof(msg), MPI_INT, i, MSG_TYPE_REL, MPI_COMM_WORLD);
+    }
 }
 
 void sendOK(int target) {
@@ -108,6 +108,9 @@ int l_clock = 0;
 // liczba odebranych OK
 int ok_count = 0;
 
+// id pojazdu, który obecnie używamy
+int current_vehicle_id = -1;
+
 // kolejka do morza
 // TODO
 
@@ -118,64 +121,107 @@ int ok_count = 0;
 // TODO
 
 // tablica stanów pojazdów
-// TODO
+int vehicle_health[VEHICLE_SLOTS];
 
 // lista numerów pojazdów w kolejce do których stoimy
 // TODO
+
+int size, rank;
 
 /* TWORZONE WĄTKI */
 
 // wątek oczekujący na turystów
 void *awaitTouristsThread(void *ptr)
 {
-    // losowy sleep
+    // losowy sleep 1s do 3s
+    usleep(rand() % 2000000 + 1000000);
 
     // wylosuj liczbę użytkowników
+    int tourists = rand() % 10 + 1;
 
     // mutex on
+    pthread_mutex_lock(&mut);
 
     // wyślij REQ do morza
+    sendREQ(RESOURCE_SEA, 0, rank, size);
 
     // zmień stan na 2 (czekamy na dostęp do morza)
+    current_state = STATE_AWAIT_SEA_ACCESS;
+    ok_count = 0;
 
     // mutex off
+    pthread_mutex_lock(&mut);
 }
 
 // wątek oczekujący na zakończenie wycieczki
 void *awaitTourEndThread(void *ptr)
 {
-    // losowy sleep
+    // losowy sleep 1s do 3s
+    usleep(rand() % 2000000 + 1000000);
 
     // mutex on
+    pthread_mutex_lock(&mut);
 
     // wylosuj spadek stanu technicznego pojazdu
+    int damage = rand() % VEHICLE_HEALTH_MAX_DECLINE + 1;
+    int new_health = vehicle_health[current_vehicle_id] - damage;
 
     // jeśli nowy stan techniczny > 0
-    // wyślij REL dla pojazdu
-    // wyślij REL dla morza
-    // przejdź do stanu 1 - oczekuj na turystów
+    if (new_health > 0) {
+        // wyślij REL dla pojazdu
+        sendREL(RESOURCE_VEHICLE, current_vehicle_id, new_health, rank, size);
+        
+        // wyślij REL dla morza
+        sendREL(RESOURCE_SEA, 0, 0, rank, size);
 
-    // wpp - jeśli pojazd się popsuł
-    // wyślij REQ dla technika
-    // przejdź do stanu 5 - oczekuj na technika
+        // przejdź do stanu 1 - oczekuj na turystów
+        current_state = STATE_AWAIT_TOURISTS;
 
+        // tworzymy wątek czekający na turystów
+        pthread_t threadStart;
+        pthread_create( &threadStart, NULL, awaitTouristsThread, 0);
+
+    }
+    else
+    {
+        // wpp - jeśli pojazd się popsuł
+        // wyślij REQ dla technika
+        ok_count = 0;
+        sendREQ(RESOURCE_TECHNICIAN, 0, rank, size);
+        // przejdź do stanu 5 - oczekuj na technika
+        current_state = STATE_AWAIT_TECHNICIAN;
+    }
     // mutex off
+    pthread_mutex_unlock(&mut);
 }
 
 // wątek oczekujący na zakończenie naprawy
 void *awaitVehicleRepairThread(void *ptr)
 {
-    // losowy sleep
+    // losowy sleep 1s do 3s
+    usleep(rand() % 2000000 + 1000000);
 
     // mutex on
+    pthread_mutex_lock(&mut);
 
     // REL dla technika
-    
+    sendREL(RESOURCE_TECHNICIAN, 0, 0, rank, size);
+
     // REL dla pojazdu z MAX stanem technicznym
+    sendREL(RESOURCE_VEHICLE, current_vehicle_id, VEHICLE_STARTING_HEALTH, rank, size);
+
+    // REL dla morza
+    sendREL(RESOURCE_SEA, 0, 0, rank, size);
 
     // przejdź do stanu 1 - oczekuj na turystów
+    current_state = STATE_AWAIT_TOURISTS;
+    
+    // tworzymy wątek czekający na turystów
+    pthread_t threadStart;
+    pthread_create( &threadStart, NULL, awaitTouristsThread, 0);
 
     // mutex off
+    pthread_mutex_unlock(&mut);
 }
 
 // TODO - funkcja logująca (w konsoli)
@@ -184,15 +230,57 @@ void log(int id, int timestamp, char *message) {
     // TODO
 }
 
-// TODO - funkcje odpowiedzialne za zarządzanie kolejkami
+// funkcje odpowiedzialne za zarządzanie kolejkami
 
 // updateRel, updateReq, findShortestVehicleQueue
 // canAccessTechnician, canAccessSea, canAccessVehicle
+
+// zwraca informację czy można uzyskać dostęp do morza
+int canAccessSea(int rank)
+{
+    // TODO
+    return TRUE;
+}
+
+// zwraca informację T/F czy można uzyskać dostęp do danego pojazdu
+int canAccessVehicle(int rank) 
+{
+    // TODO
+    return TRUE;
+}
+
+// --- czy można uzyskać dostęp do technika
+int canAccessTechnician(int rank)
+{
+    // TODO
+    return TRUE;
+}
+
+// zwraca id pojazdu o najkrótszej kolejce
+int findShortestVehicleQueue()
+{
+    // TODO
+    return 0;
+}
+
+// aktualizuje kolejkę w oparciu o REL danego typu
+void updateRel(resource_type, resource_id, resource_update_value)
+{
+    // TODO
+}
+
+// aktualizuje kolejkę w oparciu o REQ danego typu
+void updateReq(resource_type, resource_id)
+{
+    // TODO
+}
 
 
 // główna funkcja
 int main(int argc, char **argv)
 {
+    srand(time(0));
+
     printf("poczatek\n");
     int provided;
 
@@ -220,7 +308,11 @@ int main(int argc, char **argv)
     }
 
     // inicjalizacja 
-    int size, rank;
+
+    for (int i = 0; i < VEHICLE_SLOTS; i++) {
+        vehicle_health[i] = VEHICLE_STARTING_HEALTH;
+    }
+
     MPI_Status status;
 
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -277,7 +369,7 @@ int main(int argc, char **argv)
                             current_state = STATE_AWAIT_VEHICLE_ACCESS;
                             ok_count = 0;
                             int best_vehicle = findShortestVehicleQueue();
-                            sendREQ(RESOURCE_VEHICLE, best_vehicle);
+                            sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
                         }
                     }
                 }
@@ -289,7 +381,7 @@ int main(int argc, char **argv)
                                 current_state = STATE_AWAIT_VEHICLE_ACCESS;
                                 ok_count = 0;
                                 int best_vehicle = findShortestVehicleQueue();
-                                sendREQ(RESOURCE_VEHICLE, best_vehicle);
+                                sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
                             }
                         }
                     }
