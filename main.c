@@ -179,6 +179,7 @@ int canAccessSea(int rank)
         s += cur->count;
         if (cur->client_id == rank) {
             if (s <= SEA_SLOTS) {
+                printf("[P%02d][t=%05d] Moge wejsc na morze, z moimi pasazerami na morzu bedzie przynajmniej %d osob\n", rank, l_clock, s);
                 return TRUE;
             }
             else
@@ -209,8 +210,10 @@ int canAccessTechnician(int rank)
     int i = 1;
     while (cur != NULL) {
         if (cur->client_id == rank) {
-            if (i <= TECHNICIAN_SLOTS)
+            if (i <= TECHNICIAN_SLOTS) {
+                printf("[P%02d][t=%05d] Dostalem technika bedac w top%d kolejki do technikow\n", rank, l_clock, i);
                 return TRUE;
+            }
             else
             {
                 return FALSE;
@@ -292,7 +295,7 @@ void updateRel(int resource_type, int resource_id, int resource_update_value, in
                 }
                 prev_vehicle = vq;
                 vq = vq->next;
-            }   
+            }  
             }        
             break;
         case 3: {// resource_technician
@@ -368,6 +371,7 @@ void updateReq(int resource_type, int resource_id, int timestamp, int client_id)
                 nv->next = NULL;
                 return;
             }
+            
 
             vehicle_queue_el *prev_vehicle = NULL;
             vehicle_queue_el *vq = vehicle_queue[resource_id];
@@ -442,12 +446,10 @@ void *awaitTouristsThread(void *ptr)
     // wylosuj liczbę użytkowników
     tourists = rand() % MAX_TOURISTS + 1;
 
-    p_log(rank, l_clock, "Wylosowano liczbe turystow.");
+    printf("[P%02d][t=%05d] Zglosilo sie do mnie %d turystow, poprosze o dostep do morza \n", rank, l_clock, tourists);
 
     // mutex on
     pthread_mutex_lock(&mut);
-
-    p_log(rank, l_clock, "Prosze o dostep do morza.");
 
     // wyślij REQ do morza
     ok_count = 0;
@@ -467,7 +469,6 @@ void *awaitTourEndThread(void *ptr)
 {
     // losowy sleep 1s do 3s
     usleep(rand() % 2000000 + 1000000);
-    p_log(rank, l_clock, "Koniec wycieczki.");
 
     // mutex on
     pthread_mutex_lock(&mut);
@@ -524,8 +525,6 @@ void *awaitVehicleRepairThread(void *ptr)
 
     // mutex on
     pthread_mutex_lock(&mut);
-
-    current_vehicle_id = -1;
     
     updateRel(RESOURCE_TECHNICIAN, 0, 0, rank);
     // REL dla technika
@@ -541,6 +540,8 @@ void *awaitVehicleRepairThread(void *ptr)
 
     // przejdź do stanu 1 - oczekuj na turystów
     current_state = STATE_AWAIT_TOURISTS;
+
+    current_vehicle_id = -1;
     
     // tworzymy wątek czekający na turystów
     pthread_t threadStart;
@@ -752,7 +753,6 @@ int main(int argc, char **argv)
                     ok_count++;
                     if (ok_count == size - 1) { //już wszystkie procesy zaktualizowały informacje
                         if (canAccessTechnician(rank)) {
-                            p_log(rank, l_clock, "Yay! Dostalem technika.");
                             // jeśli mogę to korzystam z usługi technika
                             current_state = STATE_REPAIR_IN_PROGRESS;
                             ok_count = 0;
@@ -767,7 +767,6 @@ int main(int argc, char **argv)
                     if (msg.resource_type == RESOURCE_SEA) { //REL dotyczył dostępu do morza
                         if (ok_count == size - 1) { //i wszystkie inne procesy już wiedzą że też chcemy
                             if (canAccessTechnician(rank)) {
-                                p_log(rank, l_clock, "Yay! Dostalem technika.");
                                 current_state = STATE_REPAIR_IN_PROGRESS;
                                 ok_count = 0;
                                 // tworzymy nowy wątek oczekiwania na koniec naprawy
@@ -786,13 +785,16 @@ int main(int argc, char **argv)
 
             case STATE_REPAIR_IN_PROGRESS: {
                 // czekamy na koniec naprawy - nic szczególnego się nie dzieje
-                if (msg_type == MSG_TYPE_OK && msg.timestamp > req_timestamp)
+                if (msg_type == MSG_TYPE_OK && msg.timestamp > req_timestamp) {
                     ok_count++; // w teorii to nigdy nie powinno wykonać się w tym stanie
-                if (msg_type == MSG_TYPE_REL)
+                }
+                if (msg_type == MSG_TYPE_REL) {
                     updateRel(msg.resource_type, msg.resource_id, msg.resource_update_value, sender);
-                if (msg_type == MSG_TYPE_REQ)
+                }
+                if (msg_type == MSG_TYPE_REQ) {
                     updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
-                    sendOK(sender);
+                    sendOK(sender); //zdradzieckie ify bez bloku z wąsów {} - 30min debuggowania
+                }
                 break;
             }
         }       
