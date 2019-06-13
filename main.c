@@ -196,10 +196,10 @@ int canAccessSea(int rank)
 // zwraca informację T/F czy można uzyskać dostęp do danego pojazdu
 int canAccessVehicle(int rank, int vehicle_id) 
 {
-    if (vehicle_queue[vehicle_id]->client_id != rank) {
-        return FALSE;
-    } else {
+    if (vehicle_queue[vehicle_id]->client_id == rank) {
         return TRUE;
+    } else {
+        return FALSE;
     }
 }
 
