@@ -156,14 +156,20 @@ int size, rank;
 // wątek oczekujący na turystów
 void *awaitTouristsThread(void *ptr)
 {
+    log(rank, l_clock, "Czekam na turystow...");
+
     // losowy sleep 1s do 3s
     usleep(rand() % 2000000 + 1000000);
 
     // wylosuj liczbę użytkowników
     int tourists = rand() % 10 + 1;
 
+    log(rank, l_clock, "Wylosowano liczbe turystow.");
+
     // mutex on
     pthread_mutex_lock(&mut);
+
+    log(rank, l_clock, "Prosze o dostep do morza.");
 
     // wyślij REQ do morza
     sendREQ(RESOURCE_SEA, 0, rank, size);
@@ -181,6 +187,7 @@ void *awaitTourEndThread(void *ptr)
 {
     // losowy sleep 1s do 3s
     usleep(rand() % 2000000 + 1000000);
+    log(rank, l_clock, "Koniec wycieczki.");
 
     // mutex on
     pthread_mutex_lock(&mut);
@@ -191,6 +198,7 @@ void *awaitTourEndThread(void *ptr)
 
     // jeśli nowy stan techniczny > 0
     if (new_health > 0) {
+        log(rank, l_clock, "Pojazd jeszcze sie nie popsul, zwalniam pojazd i morze.");
         // wyślij REL dla pojazdu
         sendREL(RESOURCE_VEHICLE, current_vehicle_id, new_health, rank, size);
         
@@ -207,6 +215,7 @@ void *awaitTourEndThread(void *ptr)
     }
     else
     {
+        log(rank, l_clock, "Pojazd sie popsul, prosze o technika.");
         // wpp - jeśli pojazd się popsuł
         // wyślij REQ dla technika
         ok_count = 0;
@@ -224,8 +233,12 @@ void *awaitVehicleRepairThread(void *ptr)
     // losowy sleep 1s do 3s
     usleep(rand() % 2000000 + 1000000);
 
+
+    log(rank, l_clock, "Naprawa skonczona, zwalniam technika, pojazd i morze.");
+
     // mutex on
     pthread_mutex_lock(&mut);
+    
 
     // REL dla technika
     sendREL(RESOURCE_TECHNICIAN, 0, 0, rank, size);
@@ -589,6 +602,7 @@ int main(int argc, char **argv)
                                 int best_vehicle = findShortestVehicleQueue();
                                 awaited_vehicle_id = best_vehicle;
                                 sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
+                                log(rank, l_clock, "Mam juz dostep do morza, prosze o pojazd.");
                             }
                         }
                     }
@@ -603,6 +617,7 @@ int main(int argc, char **argv)
                                 int best_vehicle = findShortestVehicleQueue();
                                 awaited_vehicle_id = best_vehicle;
                                 sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
+                                log(rank, l_clock, "Mam juz dostep do morza, prosze o pojazd.");
                             }
                         }
                     }
@@ -631,6 +646,7 @@ int main(int argc, char **argv)
                             if (canAccessVehicle(rank, awaited_vehicle_id)) { //jeśli możemy wejść do pojazdu to wchodzimy
                                 current_state = STATE_TOUR_IN_PROGRESS;
                                 ok_count = 0;
+                                log(rank, l_clock, "Mam pojazd, rozpoczynam wycieczke.");
                                 pthread_t threadTour;
                                 pthread_create( &threadTour, NULL, awaitTourEndThread, 0);                                
                             }
@@ -644,6 +660,7 @@ int main(int argc, char **argv)
                         if (canAccessVehicle(rank, awaited_vehicle_id)) { // to próbujemy do niego wejść (jeśli możemy)
                             current_state = STATE_TOUR_IN_PROGRESS;
                             ok_count = 0;
+                            log(rank, l_clock, "Mam pojazd, rozpoczynam wycieczke.");
                             pthread_t threadTour2;
                             pthread_create( &threadTour2, NULL, awaitTourEndThread, 0);  
                         }
@@ -675,6 +692,7 @@ int main(int argc, char **argv)
                     ok_count++;
                     if (ok_count == size) { //już wszystkie procesy zaktualizowały informacje
                         if (canAccessTechnician(rank)) {
+                            log(rank, l_clock, "Yay! Dostalem technika.");
                             // jeśli mogę to korzystam z usługi technika
                             current_state = STATE_REPAIR_IN_PROGRESS;
                             ok_count = 0;
@@ -689,6 +707,7 @@ int main(int argc, char **argv)
                     if (msg.resource_type == RESOURCE_SEA) { //REL dotyczył dostępu do morza
                         if (ok_count == size) { //i wszystkie inne procesy już wiedzą że też chcemy
                             if (canAccessTechnician(rank)) {
+                                log(rank, l_clock, "Yay! Dostalem technika.");
                                 current_state = STATE_REPAIR_IN_PROGRESS;
                                 ok_count = 0;
                                 // tworzymy nowy wątek oczekiwania na koniec naprawy
