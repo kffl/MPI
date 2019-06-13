@@ -146,6 +146,8 @@ int vehicle_health[VEHICLE_SLOTS];
 
 // lista numerów pojazdów w kolejce do których stoimy
 // TODO
+// na początek uproszczone - jednocześnie stoimy w kolejce do jednego pojazdu
+int awaited_vehicle_id = -1;
 
 int size, rank;
 
@@ -208,7 +210,6 @@ void *awaitTourEndThread(void *ptr)
         // wpp - jeśli pojazd się popsuł
         // wyślij REQ dla technika
         ok_count = 0;
-        req_timestamp = l_clock + 1;
         sendREQ(RESOURCE_TECHNICIAN, 0, rank, size);
         // przejdź do stanu 5 - oczekuj na technika
         current_state = STATE_AWAIT_TECHNICIAN;
@@ -334,7 +335,7 @@ int findShortestVehicleQueue(int rank)
 }
 
 // aktualizuje kolejkę w oparciu o REL danego typu
-void updateRel(resource_type, resource_id, resource_update_value, client_id)
+void updateRel(int resource_type, int resource_id, int resource_update_value, int client_id)
 {
     switch(resource_type) {
         case RESOURCE_SEA:
@@ -345,9 +346,11 @@ void updateRel(resource_type, resource_id, resource_update_value, client_id)
                     if (prev == NULL) {
                         sea_queue = sq->next;
                         delete sq;
+                        return;
                     } else {
                         prev->next = sq->next;
                         delete sq;
+                        return;
                     }
                 }
                 prev = sq;
@@ -356,20 +359,136 @@ void updateRel(resource_type, resource_id, resource_update_value, client_id)
 
             break;
         case RESOURCE_VEHICLE:
-            //TODO - usuwac element z kolejki do pojazdu
-            
+            vehicle_queue_el *prev_vehicle = NULL;
+            vehicle_queue_el *vq = vehicle_queue[resource_id];
+            while(vq != NULL) {
+                if (vq->client_id == client_id) {
+                    if (prev_vehicle == NULL) {
+                        vehicle_queue[resource_id] = vq->next;
+                        delete vq;
+                        return;
+                    } else {
+                        prev_vehicle->next = vq->next;
+                        delete vq;
+                        return;
+                    }
+                }
+                prev_vehicle = vq;
+                vq = vq->next;
+            }
+            if (resource_update_value > 0) {
+                vehicle_health[resource_id] = resource_update_value;
+            }            
             break;
         case RESOURCE_TECHNICIAN:
-            //TODO - usuwac element z kolejki do techników
-
+            technician_queue_el *prev_tech = NULL;
+            technician_queue_el *tq = technician_queue;
+            while (tq != NULL) {
+                if (tq->client_id == client_id) {
+                    if (prev_tech == NULL) {
+                        technician_queue = tq->next;
+                        delete tq;
+                        return;
+                    } else {
+                        prev_tech->next = tq->next;
+                        delete tq;
+                        return;
+                    }
+                }
+                prev_tech = tq;
+                tq = tq->next;
+            }
             break;
     }
 }
 
 // aktualizuje kolejkę w oparciu o REQ danego typu - dodaje element do kolejki danego zasobu
-void updateReq(resource_type, resource_id)
+void updateReq(int resource_type, int resource_id, int timestamp, int client_id)
 {
-    // TODO
+    switch(resource_type) {
+        case RESOURCE_SEA:
+            sea_queue_el *n = new sea_queue_el;
+            n->client_id = client_id;
+            n->timestamp = timestamp;
+            n->count = resource_id;
+
+            sea_queue_el *prev = NULL;
+            sea_queue_el *sq = sea_queue;
+            while (sq != NULL) {
+                if (sq->timestamp > timestamp || (sq->timestamp == timestamp && sq->client_id < client_id)) {
+                    if (prev == NULL) {
+                        n->next = sea_queue;
+                        sea_queue = n;
+                        return;
+                    } else {
+                        n->next = sq;
+                        prev->next = n;
+                        return;
+                    }
+                }
+                prev = sq;
+                sq = sq->next;
+            }  
+            if (sq == NULL) {
+                prev->next = n;
+                n->next = NULL;
+            }         
+            break;
+        case RESOURCE_VEHICLE:
+            vehicle_queue_el *nv = new vehicle_queue_el;
+            nv->client_id = client_id;
+            nv->timestamp = timestamp;
+
+            vehicle_queue_el *prev_vehicle = NULL;
+            vehicle_queue_el *vq = vehicle_queue[resource_id];
+            while(vq != NULL) {
+                if (vq->timestamp > timestamp || (vq->timestamp == timestamp && vq->client_id < client_id)) {
+                    if (prev_vehicle == NULL) {
+                        nv->next = vehicle_queue[resource_id];
+                        vehicle_queue[resource_id] = nv;
+                        return;
+                    } else {
+                        nv->next = vq;
+                        prev_vehicle->next = nv;
+                        return;
+                    }
+                }
+                prev_vehicle = vq;
+                vq = vq->next;
+            }
+            if (vq == NULL) {
+                prev_vehicle->next = nv;
+                nv->next = NULL;
+            }           
+            break;
+        case RESOURCE_TECHNICIAN:
+            technician_queue_el *nt = new technician_queue_el;
+            nt->timestamp = timestamp;
+            nt->client_id = client_id;
+
+            technician_queue_el *prev_tech = NULL;
+            technician_queue_el *tq = technician_queue;
+            while (tq != NULL) {
+                if (tq->timestamp > timestamp || (tq->timestamp == timestamp && tq->client_id < client_id)) {
+                    if (prev_tech == NULL) {
+                        nt->next = technician_queue;
+                        technician_queue = nt;
+                        return;
+                    } else {
+                        nt->next = tq;
+                        prev_tech->next = nt;
+                        return;
+                    }
+                }
+                prev_tech = tq;
+                tq = tq->next;
+            }
+            if (tq == NULL) {
+                prev_tech->next = nv;
+                nv->next = NULL;
+            }
+            break;
+    }
 }
 
 
@@ -451,7 +570,7 @@ int main(int argc, char **argv)
                     updateRel(msg.resource_type, msg.resource_id, msg.resource_update_value, sender);
                 } 
                 if (msgtype == MSG_TYPE_REQ) {
-                    updateReq(msg.resource_type, msg.resource_id);
+                    updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
                     sendOK(sender);
                 }     
                 break;
@@ -468,7 +587,7 @@ int main(int argc, char **argv)
                                 current_state = STATE_AWAIT_VEHICLE_ACCESS;
                                 ok_count = 0;
                                 int best_vehicle = findShortestVehicleQueue();
-                                req_timestamp = l_clock + 1;
+                                awaited_vehicle_id = best_vehicle;
                                 sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
                             }
                         }
@@ -482,14 +601,14 @@ int main(int argc, char **argv)
                                 current_state = STATE_AWAIT_VEHICLE_ACCESS;
                                 ok_count = 0;
                                 int best_vehicle = findShortestVehicleQueue();
-                                req_timestamp = l_clock + 1;
+                                awaited_vehicle_id = best_vehicle;
                                 sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
                             }
                         }
                     }
                 }
                 if (msg_type == MSG_TYPE_REQ) {
-                    updateReq(msg.resource_type, msg.resource_id);
+                    updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
                     sendOK(sender);
                 }
                 break;
@@ -503,6 +622,38 @@ int main(int argc, char **argv)
                 //     i jeśli otrzymaliśmy komplet OK to sprawdzamy czy możemy wejść (jeśli rel dotyczy pojazdu w kolejce do którego stoimy)
                 // jeśli wiadomość to REQ to aktualizujemy odpowiednią kolejkę
                 // spore TODO
+                // na początek wersja uproszczona - jednocześnie stoimi w kolejce do tylko jednego pojazdu
+
+                if (msg_type == MSG_TYPE_OK) { // jeśli odbieramy OK
+                    if (msg.timestamp > req_timestamp) { // to sprawdzamy czy to OK o które prosiliśmy
+                        ok_count++;
+                        if (ok_count == size) { // jeśli mamy komplet OK
+                            if (canAccessVehicle(rank, awaited_vehicle_id)) { //jeśli możemy wejść do pojazdu to wchodzimy
+                                current_state = STATE_TOUR_IN_PROGRESS;
+                                ok_count = 0;
+                                pthread_t threadTour;
+                                pthread_create( &threadTour, NULL, awaitTourEndThread, 0);                                
+                            }
+                        }
+                    }
+                }
+                if (msg_type == MSG_TYPE_REL) { // jeśli odbieramy rel
+                    updateRel(msg.resource_type, msg.resource_id, msg.resource_update_value, sender); // to aktualizujemy kolejkę
+                    if (msg.resource_type == RESOURCE_VEHICLE && ok_count == size && msg.resource_id == awaited_vehicle_id) { // i jeśli rel dotyzcył pojazdu w kolejce
+                    //  do którego stoimy
+                        if (canAccessVehicle(rank, awaited_vehicle_id)) { // to próbujemy do niego wejść (jeśli możemy)
+                            current_state = STATE_TOUR_IN_PROGRESS;
+                            ok_count = 0;
+                            pthread_t threadTour2;
+                            pthread_create( &threadTour2, NULL, awaitTourEndThread, 0);  
+                        }
+                    }
+                }
+                if (msg_type == MSG_TYPE_REQ) { // jeśli to req, to aktualizujemy kolejkę i odsyłamy OKejkę
+                    updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
+                    sendOK(sender);
+                }
+
                 break;
 
             case STATE_TOUR_IN_PROGRESS:
@@ -514,7 +665,7 @@ int main(int argc, char **argv)
                     updateRel(msg.resource_type, msg.resource_id, msg.resource_update_value, sender);
                 }
                 if (msgtype == MSG_TYPE_REQ) {
-                    updateReq(msg.resource_type, msg.resource_id);
+                    updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
                     sendOK(sender);
                 }  
                 break;
@@ -548,7 +699,7 @@ int main(int argc, char **argv)
                     }
                 }
                 if (msg_type == MSG_TYPE_REQ) {
-                    updateReq(msg.resource_type, msg.resource_id);
+                    updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
                     sendOK(sender);
                 }
                 break;
@@ -560,7 +711,7 @@ int main(int argc, char **argv)
                 if (msg_type == MSG_TYPE_REL)
                     updateRel(msg.resource_type, msg.resource_id, msg.resource_update_value, sender);
                 if (msgtype == MSG_TYPE_REQ)
-                    updateReq(msg.resource_type, msg.resource_id);
+                    updateReq(msg.resource_type, msg.resource_id, msg.timestamp, sender);
                     sendOK(sender);
                 break;
         }       
