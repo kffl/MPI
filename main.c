@@ -197,6 +197,13 @@ int canAccessSea(int rank)
 int canAccessVehicle(int rank, int vehicle_id) 
 {
     if (vehicle_queue[vehicle_id]->client_id == rank) {
+        int l = 0;
+        vehicle_queue_el *cur = vehicle_queue[vehicle_id];
+        while (cur != NULL) {
+            cur = cur->next;
+            l++;
+        }
+        printf("[P%02d][t=%05d] Moge zabrac pojazd %d, dlugosc kolejki = %d \n", rank, l_clock, vehicle_id, l);
         return TRUE;
     } else {
         return FALSE;
@@ -361,7 +368,7 @@ void updateReq(int resource_type, int resource_id, int timestamp, int client_id)
             }    
             }     
             break;
-        case 2: { //resource_vehicle
+        case RESOURCE_VEHICLE: {
             vehicle_queue_el *nv = malloc(sizeof(*nv));
             nv->client_id = client_id;
             nv->timestamp = timestamp;
@@ -396,7 +403,7 @@ void updateReq(int resource_type, int resource_id, int timestamp, int client_id)
             }   
             }         
             break;
-        case 3: { //resource_technician
+        case RESOURCE_TECHNICIAN: {
             technician_queue_el *nt = malloc(sizeof(*nt));
             nt->timestamp = timestamp;
             nt->client_id = client_id;
@@ -453,7 +460,7 @@ void *awaitTouristsThread(void *ptr)
 
     // wyślij REQ do morza
     ok_count = 0;
-    updateReq(RESOURCE_SEA, tourists, l_clock, rank);
+    updateReq(RESOURCE_SEA, tourists, l_clock+1, rank);
     sendREQ(RESOURCE_SEA, tourists, rank, size);
 
     // zmień stan na 2 (czekamy na dostęp do morza)
@@ -505,7 +512,7 @@ void *awaitTourEndThread(void *ptr)
         // wpp - jeśli pojazd się popsuł
         // wyślij REQ dla technika
         ok_count = 0;
-        updateReq(RESOURCE_TECHNICIAN, 0, l_clock, rank);
+        updateReq(RESOURCE_TECHNICIAN, 0, l_clock+1, rank);
         sendREQ(RESOURCE_TECHNICIAN, 0, rank, size);
         // przejdź do stanu 5 - oczekuj na technika
         current_state = STATE_AWAIT_TECHNICIAN;
@@ -655,7 +662,7 @@ int main(int argc, char **argv)
                                 int best_vehicle = findShortestVehicleQueue(rank);
                                 awaited_vehicle_id = best_vehicle;
                                 printf("[P%02d][t=%05d] Mam juz dostep do morza, prosze o pojazd nr %d\n", rank, l_clock, best_vehicle);
-                                updateReq(RESOURCE_VEHICLE, best_vehicle, l_clock, rank);
+                                updateReq(RESOURCE_VEHICLE, best_vehicle, l_clock+1, rank);
                                 sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
                             }
                         }
@@ -671,7 +678,7 @@ int main(int argc, char **argv)
                                 int best_vehicle = findShortestVehicleQueue(rank);
                                 awaited_vehicle_id = best_vehicle;
                                 printf("[P%02d][t=%05d] Mam juz dostep do morza, prosze o pojazd nr %d\n", rank, l_clock, best_vehicle);
-                                updateReq(RESOURCE_VEHICLE, best_vehicle, l_clock, rank);
+                                updateReq(RESOURCE_VEHICLE, best_vehicle, l_clock+1, rank);
                                 sendREQ(RESOURCE_VEHICLE, best_vehicle, rank, size);
                             }
                         }
